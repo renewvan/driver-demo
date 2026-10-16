@@ -21,8 +21,8 @@ RETAINED_WAIT_S = 2.0
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="node-demo: simulated van published under renewvan-demo/, switched on and off "
-        "by renewvan-demo/enabled/set"
+        description="node-demo: simulated van published under renewvan/demo/, switched on and off "
+        "by renewvan/demo/enabled/set"
     )
     parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()

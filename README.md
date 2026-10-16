@@ -3,8 +3,9 @@
 A simulated van on the renewvan bus, so the dashboard (and any other consumer) can be
 developed and shown without a van, a Pi, or hardware. It replays the scenarios in
 [`scenarios/`](scenarios/) on a shared 1 Hz clock under a **separate topic root**,
-`renewvan-demo/`, so demo values never overwrite retained real state on `renewvan/` and never
-reach the logger / InfluxDB.
+`renewvan/demo/`, so demo values never overwrite retained real state (`renewvan/<entity>/...`) and
+never reach the logger / InfluxDB (it only writes four-segment `renewvan/<entity-domain>/<id>/<prop>`
+topics; demo entity topics have five).
 
 Inspired by Venus OS's Demo mode: `dbus-recorder`'s `play.py` replays recordings of real
 services under the same D-Bus service names the real hardware uses, loops them, and resets to
@@ -18,11 +19,11 @@ Authoritative: [`hub/docs/demo-mode.md`](../hub/docs/demo-mode.md).
 
 | Topic | Direction | Payload |
 |---|---|---|
-| `renewvan-demo/enabled/set` | client → node-demo | JSON `true` / `false`, not retained: the command |
-| `renewvan-demo/enabled` | node-demo → bus | JSON `true` / `false`, retained: the shared state every client follows |
-| `renewvan-demo/<entity>/<id>/<property>` | node-demo → bus | `json.dumps(value)`, retained, QoS 1 (identical encoding to `renewvan/...`), only while on |
-| `renewvan-demo/health` | node-demo → bus | bare `online` / `offline` (LWT), retained |
-| `renewvan-demo/router/health` | node-demo → bus | bare `online` while on and a router scenario exists |
+| `renewvan/demo/enabled/set` | client → node-demo | JSON `true` / `false`, not retained: the command |
+| `renewvan/demo/enabled` | node-demo → bus | JSON `true` / `false`, retained: the shared state every client follows |
+| `renewvan/demo/<entity>/<id>/<property>` | node-demo → bus | `json.dumps(value)`, retained, QoS 1 (identical encoding to `renewvan/...`), only while on |
+| `renewvan/demo/health` | node-demo → bus | bare `online` / `offline` (LWT), retained |
+| `renewvan/demo/router/health` | node-demo → bus | bare `online` while on and a router scenario exists |
 
 node-demo always runs and is **idle until switched on**: one MQTT connection and a 1 Hz tick that
 publishes nothing. Any client turns the demo on or off for everyone by publishing the command.
@@ -35,7 +36,7 @@ publishes nothing. Any client turns the demo on or off for everyone by publishin
 - **Boot:** a retained `enabled: true` resumes the demo from the initial state; no retained
   value means off.
 - **`SIGTERM`/`SIGINT`:** the van is cleared and the broker's acknowledgements awaited, then
-  `renewvan-demo/health` is set to `offline`. `enabled` is left as it was, so a Pi that reboots
+  `renewvan/demo/health` is set to `offline`. `enabled` is left as it was, so a Pi that reboots
   in demo mode comes back in demo mode.
 - Anything but a JSON boolean on `enabled/set` is ignored and logged.
 - Entity command topics (`.../set`) are not simulated; demo state is read-only.
@@ -83,8 +84,8 @@ docker run --rm --network host -e MQTT_HOST=localhost node-demo
 Switch it on and watch it:
 
 ```bash
-mosquitto_pub -t renewvan-demo/enabled/set -m true
-mosquitto_sub -t 'renewvan-demo/#' -v
+mosquitto_pub -t renewvan/demo/enabled/set -m true
+mosquitto_sub -t 'renewvan/demo/#' -v
 ```
 
 ## Testing
@@ -98,7 +99,7 @@ No broker needed: `scenario.py` and `controller.py` are pure and the driver is t
 controller and clock. The unit tests cannot see broker behaviour though (a fake publisher hid a
 deadlock on the MQTT thread), so after changing the controller or publisher, run it against a
 real mosquitto: toggle `enabled/set` from a second client, then confirm with
-`mosquitto_sub -t 'renewvan-demo/#' --retained-only` that the van is gone after `false`.
+`mosquitto_sub -t 'renewvan/demo/#' --retained-only` that the van is gone after `false`.
 
 ## Releasing
 

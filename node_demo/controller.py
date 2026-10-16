@@ -1,5 +1,5 @@
-"""The shared Demo mode switch: `renewvan-demo/enabled` (state, retained) and
-`renewvan-demo/enabled/set` (command), the same `<topic>` / `<topic>/set` convention as the kiosk
+"""The shared Demo mode switch: `renewvan/demo/enabled` (state, retained) and
+`renewvan/demo/enabled/set` (command), the same `<topic>` / `<topic>/set` convention as the kiosk
 settings. Any client can publish the command, so toggling demo mode in one dashboard starts the
 simulated van for every other client; node-demo itself always runs and is idle while disabled.
 
@@ -15,13 +15,13 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from node_demo.scenario import Scenario, messages_at
+from node_demo.scenario import TOPIC_ROOT, Scenario, messages_at
 
 logger = logging.getLogger(__name__)
 
-ENABLED_TOPIC = "renewvan-demo/enabled"
-ENABLED_SET_TOPIC = "renewvan-demo/enabled/set"
-ROUTER_HEALTH_TOPIC = "renewvan-demo/router/health"
+ENABLED_TOPIC = f"{TOPIC_ROOT}/enabled"
+ENABLED_SET_TOPIC = f"{ENABLED_TOPIC}/set"
+ROUTER_HEALTH_TOPIC = f"{TOPIC_ROOT}/router/health"
 
 
 class PublisherLike(Protocol):
@@ -48,6 +48,10 @@ class Controller:
         self._lock = threading.RLock()
         # The driver tick at which the demo was last enabled; scenarios loop relative to it.
         self._origin = 0
+        # Enabling publishes relative tick 0 itself. A queued command is applied without consuming
+        # a driver tick, so the driver's next regular tick has the same number; that tick would
+        # compute relative 0 again and publish the whole initial record a second time.
+        self._published_origin_tick = False
         self._published: set[str] = set()
         # Latest requested state not yet applied; a later command replaces an earlier one.
         self._pending: bool | None = None
@@ -88,8 +92,9 @@ class Controller:
                 else:
                     self._disable()
                 logger.info("Demo mode %s", "enabled" if enabled else "disabled")
-            # Re-asserted even when unchanged: harmless, and it repairs a lost retained flag.
-            self._publisher.publish(ENABLED_TOPIC, enabled)
+                # Only on a change: every client re-renders on this topic, and the retained value
+                # is already right when the command repeats the current state.
+                self._publisher.publish(ENABLED_TOPIC, enabled)
 
     def apply_pending(self, now_tick: int) -> bool:
         """Apply a queued command, if any, starting the scenarios at `now_tick`. Returns whether
@@ -107,8 +112,15 @@ class Controller:
         with self._lock:
             if self.apply_pending(n):
                 return
-            if self._enabled:
-                self._publish_tick(max(0, n - self._origin))
+            if not self._enabled:
+                return
+            relative = max(0, n - self._origin)
+            if relative == 0 and self._published_origin_tick:
+                # Already published by `_enable` for this very tick.
+                self._published_origin_tick = False
+                return
+            self._published_origin_tick = False
+            self._publish_tick(relative)
 
     def shutdown(self) -> None:
         """Clear the simulated van; the retained `enabled` flag stays so the next boot resumes."""
@@ -120,6 +132,7 @@ class Controller:
         self._enabled = True
         self._origin = now_tick
         self._publish_tick(0)
+        self._published_origin_tick = True
         if any(s.entity == "router" for s in self._scenarios):
             self._publisher.publish_raw(ROUTER_HEALTH_TOPIC, "online")
             self._published.add(ROUTER_HEALTH_TOPIC)

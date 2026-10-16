@@ -6,7 +6,7 @@ from node_demo.scenario import initial_messages, load_scenarios
 SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
 SCENARIOS = load_scenarios(SCENARIO_DIR)
 INITIAL = {t: v for s in SCENARIOS for t, v in initial_messages(s).items()}
-ROUTER_HEALTH = "renewvan-demo/router/health"
+ROUTER_HEALTH = "renewvan/demo/router/health"
 
 
 def a_property_that_moves():
@@ -14,7 +14,7 @@ def a_property_that_moves():
     for s in SCENARIOS:
         for step in s.timeline:
             for prop, value in step.set.items():
-                topic = f"renewvan-demo/{s.entity}/{s.id}/{prop}"
+                topic = f"renewvan/demo/{s.entity}/{s.id}/{prop}"
                 if value != INITIAL[topic]:
                     return topic, INITIAL[topic], step.t
     raise AssertionError("no scenario ever changes a property")
@@ -180,3 +180,61 @@ def test_enabling_mid_run_starts_every_scenario_at_its_beginning():
     assert pub.json[topic] == initial
     c.tick(500 + at)
     assert pub.json[topic] != initial
+
+
+class CountingPublisher(FakePublisher):
+    def __init__(self):
+        super().__init__()
+        self.counts: dict[str, int] = {}
+
+    def publish(self, topic, payload):
+        self.counts[topic] = self.counts.get(topic, 0) + 1
+        super().publish(topic, payload)
+
+
+def test_switching_on_publishes_every_initial_value_exactly_once():
+    """The driver applies a queued command WITHOUT consuming a scenario tick, so its next regular
+    tick has the same number. That tick must not replay tick 0 and publish the whole initial
+    record a second time (it landed on the right values, so only the traffic doubled)."""
+    pub = CountingPublisher()
+    c = Controller(SCENARIOS, pub)
+    c.start()
+    c.on_command("true")
+    c.apply_pending(7)  # the wake path: applied at tick 7, tick 7 not yet consumed
+    c.tick(7)  # the regular tick with the same number
+    c.tick(8)
+    twice = {t: n for t, n in pub.counts.items() if n > 1 and t != ENABLED_TOPIC}
+    assert not twice, f"republished: {sorted(twice)[:3]}"
+
+
+def test_a_scenario_still_loops_after_a_wake_applied_enable():
+    pub = CountingPublisher()
+    c = Controller(SCENARIOS, pub)
+    c.start()
+    c.on_command("true")
+    c.apply_pending(100)
+    topic, initial, at = a_property_that_moves()
+    c.tick(100 + at)
+    assert pub.json[topic] != initial
+    loop = max(s.loop_s for s in SCENARIOS)
+    c.tick(100 + loop)  # one full loop later: back to the initial record
+    assert pub.json[topic] == initial
+
+
+def test_the_enabled_flag_is_published_only_when_it_changes():
+    """A client re-renders on every `enabled` message; repeating an unchanged state is noise."""
+    pub = CountingPublisher()
+    c = Controller(SCENARIOS, pub)
+    c.start()
+    assert pub.counts[ENABLED_TOPIC] == 1  # boot publishes the state once
+    c.on_command("true")
+    c.tick(1)
+    assert pub.counts[ENABLED_TOPIC] == 2
+    c.on_command("true")  # already on
+    c.tick(2)
+    c.on_command("true")
+    c.tick(3)
+    assert pub.counts[ENABLED_TOPIC] == 2, "a repeated command must not republish the state"
+    c.on_command("false")
+    c.tick(4)
+    assert pub.counts[ENABLED_TOPIC] == 3
