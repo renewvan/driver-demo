@@ -16,17 +16,35 @@ reset to the initial record at each loop restart.
 
 Authoritative: [`hub/docs/demo-mode.md`](../hub/docs/demo-mode.md).
 
-| Topic | Payload |
-|---|---|
-| `renewvan-demo/<entity>/<id>/<property>` | `json.dumps(value)`, retained, QoS 1 (identical encoding to `renewvan/...`) |
-| `renewvan-demo/health` | `online` / `offline` (LWT), retained |
+| Topic | Direction | Payload |
+|---|---|---|
+| `renewvan-demo/enabled/set` | client → node-demo | JSON `true` / `false`, not retained: the command |
+| `renewvan-demo/enabled` | node-demo → bus | JSON `true` / `false`, retained: the shared state every client follows |
+| `renewvan-demo/<entity>/<id>/<property>` | node-demo → bus | `json.dumps(value)`, retained, QoS 1 (identical encoding to `renewvan/...`), only while on |
+| `renewvan-demo/health` | node-demo → bus | bare `online` / `offline` (LWT), retained |
+| `renewvan-demo/router/health` | node-demo → bus | bare `online` while on and a router scenario exists |
 
-- At loop start (and on process start) every property of every scenario's `initial` record is
-  published; at `t` seconds into the loop only the properties of the timeline step at `t`.
-- On `SIGTERM`/`SIGINT` it clears every retained topic it published (empty retained payload,
-  the ADR 0008 "no value" convention), waits for the broker to acknowledge, then publishes
-  `renewvan-demo/health` = `offline` and exits. Nothing but the health topic lingers.
-- Command topics (`.../set`) are not simulated; demo state is read-only.
+node-demo always runs and is **idle until switched on**: one MQTT connection and a 1 Hz tick that
+publishes nothing. Any client turns the demo on or off for everyone by publishing the command.
+
+- **Enabled:** every property of every scenario's `initial` record is published, then at `t`
+  seconds into the loop only the properties of the timeline step at `t`. Every scenario restarts
+  at its beginning each time the demo is switched on; a repeated `true` does not restart it.
+- **Disabled:** every simulated topic is cleared (empty retained payload, the ADR 0008 "no value"
+  convention) and `enabled` is republished as `false`.
+- **Boot:** a retained `enabled: true` resumes the demo from the initial state; no retained
+  value means off.
+- **`SIGTERM`/`SIGINT`:** the van is cleared and the broker's acknowledgements awaited, then
+  `renewvan-demo/health` is set to `offline`. `enabled` is left as it was, so a Pi that reboots
+  in demo mode comes back in demo mode.
+- Anything but a JSON boolean on `enabled/set` is ignored and logged.
+- Entity command topics (`.../set`) are not simulated; demo state is read-only.
+- It uses a clean MQTT session: all state is in retained topics, and a persistent session would
+  replay a `/set` queued while the node was down.
+
+`/set` runs on paho's network thread, which also receives the broker's acknowledgements, so it
+only queues the request and the 1 Hz driver thread applies it (waiting for acks on the network
+thread deadlocks until the timeout and nothing is cleared).
 
 ## Scenarios
 
@@ -62,7 +80,12 @@ docker build -t node-demo .
 docker run --rm --network host -e MQTT_HOST=localhost node-demo
 ```
 
-Watch it: `mosquitto_sub -t 'renewvan-demo/#' -v`.
+Switch it on and watch it:
+
+```bash
+mosquitto_pub -t renewvan-demo/enabled/set -m true
+mosquitto_sub -t 'renewvan-demo/#' -v
+```
 
 ## Testing
 
@@ -71,7 +94,11 @@ pip install -r requirements.txt -r requirements-test.txt
 pytest tests/ -v
 ```
 
-No broker needed: `node_demo/scenario.py` is pure and the driver is tested with a fake publisher.
+No broker needed: `scenario.py` and `controller.py` are pure and the driver is tested with a fake
+controller and clock. The unit tests cannot see broker behaviour though (a fake publisher hid a
+deadlock on the MQTT thread), so after changing the controller or publisher, run it against a
+real mosquitto: toggle `enabled/set` from a second client, then confirm with
+`mosquitto_sub -t 'renewvan-demo/#' --retained-only` that the van is gone after `false`.
 
 ## Releasing
 

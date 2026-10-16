@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 
 import paho.mqtt.client as mqtt
 
@@ -21,13 +22,17 @@ HEALTH_TOPIC = "renewvan-demo/health"
 class Publisher:
     def __init__(self, config: MqttConfig) -> None:
         self._config = config
-        self._client = mqtt.Client(client_id="node-demo", clean_session=False)
+        # Clean session: all state is in retained topics, and a persistent session would replay
+        # any `/set` command queued while this node was down, flipping the demo on a restart.
+        self._client = mqtt.Client(client_id="node-demo", clean_session=True)
         if config.username:
             self._client.username_pw_set(config.username, config.password)
         self._client.will_set(HEALTH_TOPIC, payload="offline", qos=1, retain=True)
         self._client.reconnect_delay_set(min_delay=1, max_delay=30)
         self._client.on_connect = self._on_connect
+        self._client.on_message = self._on_message
         self._pending: list[mqtt.MQTTMessageInfo] = []
+        self._subscriptions: dict[str, Callable[[str], None]] = {}
 
     def _on_connect(self, client, userdata, flags, rc):  # noqa: ANN001
         if rc == 0:
@@ -35,8 +40,24 @@ class Publisher:
                 "Connected to renewvan-bus MQTT broker %s:%s", self._config.host, self._config.port
             )
             client.publish(HEALTH_TOPIC, payload="online", qos=1, retain=True)
+            for topic in self._subscriptions:
+                client.subscribe(topic, qos=1)
         else:
             logger.error("Renewvan-bus MQTT connect failed with rc=%s", rc)
+
+    def _on_message(self, client, userdata, msg):  # noqa: ANN001
+        callback = self._subscriptions.get(msg.topic)
+        if callback is None:
+            return
+        try:
+            callback(msg.payload.decode("utf-8", errors="replace"))
+        except Exception:
+            logger.exception("Error handling message on topic %s", msg.topic)
+
+    def subscribe(self, topic: str, callback: Callable[[str], None]) -> None:
+        """Register a callback; (re)subscribed on every connect, so reconnects keep listening."""
+        self._subscriptions[topic] = callback
+        self._client.subscribe(topic, qos=1)
 
     def connect(self) -> None:
         """Connect and start the network loop on a background thread."""

@@ -1,145 +1,148 @@
 import threading
-from pathlib import Path
 
 from node_demo.driver import Driver
-from node_demo.scenario import load_scenarios, messages_at
 
-SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
+
+class FakeController:
+    def __init__(self, fail_on=None):
+        self.events: list[tuple[str, int | None]] = []
+        self.fail_on = fail_on
+
+    def tick(self, n):
+        self.events.append(("tick", n))
+        if n == self.fail_on:
+            raise RuntimeError("boom")
+
+    def apply_pending(self, now_tick):
+        self.events.append(("apply", now_tick))
+        return True
+
+    def shutdown(self):
+        self.events.append(("shutdown", None))
 
 
 class FakePublisher:
-    def __init__(self):
-        self.events: list[tuple[str, str | None]] = []
-        self.raw_payloads: dict[str, str] = {}
+    def __init__(self, events):
+        self.events = events
 
-    def publish(self, topic, payload):
-        self.events.append(("publish", topic))
-
-    def publish_raw(self, topic, payload):
-        self.events.append(("publish_raw", topic))
-        self.raw_payloads[topic] = payload
-
-    def clear(self, topic):
-        self.events.append(("clear", topic))
+    def mark_offline(self):
+        self.events.append(("offline", None))
 
     def flush(self, timeout=5.0):
         self.events.append(("flush", None))
         return True
 
-    def mark_offline(self):
-        self.events.append(("offline", None))
-
     def disconnect(self):
         self.events.append(("disconnect", None))
 
-    def topics(self, kind):
-        return [t for k, t in self.events if k == kind]
 
+class FakeWake(threading.Event):
+    """A scripted sleep: each wait() advances a fake clock by what the script says, and can
+    deliver a wake (a queued command) or a stop part-way through."""
 
-class FakeClock:
-    """Each stop.wait(timeout) advances time by exactly `timeout`; stops after `ticks` waits."""
-
-    def __init__(self, stop: threading.Event, ticks: int):
-        self.now = 1000.0
+    def __init__(self, stop: threading.Event, script):
+        super().__init__()
         self.stop = stop
-        self.ticks = ticks
+        self.script = list(script)
+        self.now = 1000.0
         self.waits: list[float] = []
 
-    def __call__(self):
+    def clock(self):
         return self.now
 
-    def wait(self, timeout):
+    def wait(self, timeout=None):
         self.waits.append(timeout)
-        self.now += timeout
-        if len(self.waits) > self.ticks:
+        kind, advance = self.script.pop(0) if self.script else ("stop", 0)
+        # A real sleep consumes exactly the time it was asked for; a wake cuts it short.
+        self.now += timeout if kind == "tick" else advance
+        if kind == "wake":
+            self.set()
+        elif kind == "stop":
             self.stop.set()
-        return self.stop.is_set()
+            self.set()
+        return self.is_set()
 
 
-def make_driver(ticks, publisher=None):
-    scenarios = load_scenarios(SCENARIO_DIR)
-    publisher = publisher or FakePublisher()
+def make(script, controller=None):
+    controller = controller or FakeController()
+    publisher = FakePublisher(controller.events)
     stop = threading.Event()
-    clock = FakeClock(stop, ticks)
-    stop.wait = clock.wait  # type: ignore[method-assign]
-    return Driver(scenarios, publisher, stop, clock=clock), publisher, clock, scenarios
+    wake = FakeWake(stop, script)
+    driver = Driver(controller, publisher, stop, clock=wake.clock, wake=wake)
+    return driver, controller, wake
 
 
-def test_startup_publishes_every_scenarios_initial_state():
-    driver, pub, _, scenarios = make_driver(0)
+def ticks(controller):
+    return [n for k, n in controller.events if k == "tick"]
+
+
+def test_ticks_are_numbered_from_one_and_run_until_stopped():
+    # waiting out the full second delivers no wake; the script's own "tick" kind just advances time
+    driver, controller, _ = make([("tick", 1.0)] * 3 + [("stop", 0)])
     driver.run()
-    expected = {t for s in scenarios for t in messages_at(s, 0)}
-    assert set(pub.topics("publish")) == expected
+    assert ticks(controller) == [1, 2, 3]
 
 
-def test_shutdown_clears_every_published_topic_before_health_offline():
-    driver, pub, _, scenarios = make_driver(125)  # crosses the 120 s loop restart
+def test_shutdown_clears_the_van_before_going_offline_and_disconnecting():
+    driver, controller, _ = make([("tick", 1.0)] * 2)
     driver.run()
-    published = set(pub.topics("publish")) | set(pub.topics("publish_raw"))
-    assert published
-    assert sorted(pub.topics("clear")) == sorted(published)
-    kinds = [k for k, _ in pub.events]
-    last_clear = max(i for i, k in enumerate(kinds) if k == "clear")
-    assert kinds.index("offline") > last_clear
-    assert "flush" in kinds[last_clear : kinds.index("offline")]  # clears acked before offline
-    assert kinds.index("disconnect") > kinds.index("offline")
-    assert not any(k == "publish" for k in kinds[last_clear:])
+    kinds = [k for k, _ in controller.events]
+    assert kinds[kinds.index("shutdown") :] == ["shutdown", "offline", "flush", "disconnect"]
 
 
-def test_shutdown_clears_topics_even_if_loop_raises():
-    driver, pub, _, _ = make_driver(0)
-    driver.tick(0)
-
-    def boom(*_):
-        raise RuntimeError("boom")
-
-    driver._stop.wait = boom  # type: ignore[method-assign]
+def test_shutdown_still_runs_if_a_tick_raises():
+    driver, controller, _ = make([("tick", 1.0)] * 5, FakeController(fail_on=2))
     try:
         driver.run()
     except RuntimeError:
         pass
-    assert pub.topics("clear")
-    assert ("offline", None) in pub.events
+    assert ("shutdown", None) in controller.events
+    assert ("disconnect", None) in controller.events
 
 
 def test_sleeps_to_absolute_deadlines_without_drift():
-    driver, _, clock, _ = make_driver(5)
+    driver, _, wake = make([("tick", 1.0)] * 5)
     driver.run()
-    # clock only advances inside wait, so each wait must be exactly 1 s to the next boundary
-    assert clock.waits[:5] == [1.0] * 5
+    assert wake.waits[:5] == [1.0] * 5
 
 
 def test_late_tick_does_not_sleep_and_catches_up():
-    driver, pub, clock, _ = make_driver(3)
-    real_tick = driver.tick
+    driver, controller, wake = make([("tick", 1.0)] * 4)
+    real_tick = controller.tick
 
     def slow_tick(n):
         if n == 1:
-            clock.now += 2.5  # tick 1 takes 2.5 s
+            wake.now += 2.5  # tick 1 takes 2.5 s
         real_tick(n)
 
-    driver.tick = slow_tick  # type: ignore[method-assign]
+    controller.tick = slow_tick  # type: ignore[method-assign]
     driver.run()
-    assert clock.waits[0] == 1.0
-    assert clock.waits[1] == 0.0  # tick 2 (due +2.0) already overdue at +3.5
-    assert clock.waits[2] == 0.0  # tick 3 (due +3.0) too
-    assert clock.waits[3] == 0.5  # tick 4 due +4.0, back on the grid
+    assert wake.waits[0] == 1.0
+    assert wake.waits[1] == 0.0  # tick 2 (due +2.0) already overdue at +3.5
+    assert wake.waits[2] == 0.0  # tick 3 (due +3.0) too
+    assert wake.waits[3] == 0.5  # tick 4 due +4.0, back on the grid
 
 
-def test_router_scenario_announces_router_health_raw_and_clears_it_on_shutdown():
-    driver, pub, _, _ = make_driver(0)
+def test_a_wake_applies_the_command_without_consuming_a_scenario_tick():
+    """Toggling must not advance the scenario clock, or every toggle would speed the demo up."""
+    driver, controller, wake = make([("wake", 0.4), ("tick", 0.6), ("tick", 1.0)])
     driver.run()
-    assert pub.topics("publish_raw") == ["renewvan-demo/router/health"]
-    # Raw, not JSON: the dashboard compares the literal string `online`.
-    assert pub.raw_payloads == {"renewvan-demo/router/health": "online"}
-    assert "renewvan-demo/router/health" in pub.topics("clear")
+    assert [e for e in controller.events if e[0] in ("tick", "apply")] == [
+        ("apply", 1),
+        ("tick", 1),
+        ("tick", 2),
+    ]
 
 
-def test_no_router_scenario_means_no_router_health():
-    scenarios = [s for s in load_scenarios(SCENARIO_DIR) if s.entity != "router"]
-    pub = FakePublisher()
-    stop = threading.Event()
-    clock = FakeClock(stop, 0)
-    stop.wait = clock.wait  # type: ignore[method-assign]
-    Driver(scenarios, pub, stop, clock=clock).run()
-    assert not [e for e in pub.events if e[0] == "publish_raw"]
+def test_a_wake_resumes_waiting_for_the_same_deadline():
+    driver, _, wake = make([("wake", 0.4), ("tick", 0.6)])
+    driver.run()
+    assert wake.waits[0] == 1.0
+    assert abs(wake.waits[1] - 0.6) < 1e-9, "after a wake only the rest of the second remains"
+
+
+def test_stop_interrupts_the_sleep_and_does_not_apply_a_command():
+    driver, controller, _ = make([("stop", 0)])
+    driver.run()
+    assert not [e for e in controller.events if e[0] in ("apply", "tick")]
+    assert ("shutdown", None) in controller.events
