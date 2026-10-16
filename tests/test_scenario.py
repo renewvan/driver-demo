@@ -87,13 +87,14 @@ def test_every_changed_property_is_restored_at_reset(scenarios):
                     assert reset[s.topic(prop)] == s.initial[prop]
 
 
-def test_topics_use_demo_root_never_real_root(scenarios):
+def test_topics_are_the_scenarios_entity_under_the_demo_namespace(scenarios):
+    """`renewvan/demo/<entity>/<id>/<property>` has five segments, so it can never be the
+    four-segment `renewvan/<domain>/<id>/<property>` shape real consumers (the logger) act on."""
     for s in scenarios:
         for tick in range(s.loop_s):
             for topic in messages_at(s, tick):
-                assert topic.startswith(f"renewvan-demo/{s.entity}/{s.id}/")
-                assert not topic.startswith("renewvan/")
-                assert len(topic.split("/")) == 4
+                assert topic.startswith(f"renewvan/demo/{s.entity}/{s.id}/")
+                assert len(topic.split("/")) == 5
 
 
 def test_values_round_trip_through_json(scenarios):
@@ -105,6 +106,6 @@ def test_values_round_trip_through_json(scenarios):
 
 def test_t0_step_overlays_initial_on_reset():
     s = Scenario("tank", "x", "d", 10, {"a": 1, "b": 2}, (Step(0, {"a": 9}), Step(5, {"b": 3})))
-    assert messages_at(s, 0) == {"renewvan-demo/tank/x/a": 9, "renewvan-demo/tank/x/b": 2}
-    assert messages_at(s, 5) == {"renewvan-demo/tank/x/b": 3}
+    assert messages_at(s, 0) == {"renewvan/demo/tank/x/a": 9, "renewvan/demo/tank/x/b": 2}
+    assert messages_at(s, 5) == {"renewvan/demo/tank/x/b": 3}
     assert messages_at(s, 10) == messages_at(s, 0)

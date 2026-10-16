@@ -14,7 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-TOPIC_ROOT = "renewvan-demo"
+# The simulated van's namespace, one level inside the real `renewvan/` root. `demo` is not an
+# entity domain, so no consumer reads it as a real entity, and the logger (exactly four segments,
+# entity domains only) drops all of it. It is the single place the root is spelled.
+TOPIC_ROOT = "renewvan/demo"
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 """Persistent MQTT connection to the renewvan bus, publishing under the separate
-`renewvan-demo/` root. Same encoding as node-router's publisher (JSON value, retained,
+`renewvan/demo/` namespace. Same encoding as node-router's publisher (JSON value, retained,
 QoS 1, LWT on the health topic) so consumers read demo data with the same code.
 """
 
@@ -13,10 +13,11 @@ from collections.abc import Callable
 import paho.mqtt.client as mqtt
 
 from node_demo.config import MqttConfig
+from node_demo.scenario import TOPIC_ROOT
 
 logger = logging.getLogger(__name__)
 
-HEALTH_TOPIC = "renewvan-demo/health"
+HEALTH_TOPIC = f"{TOPIC_ROOT}/health"
 
 
 class Publisher:
