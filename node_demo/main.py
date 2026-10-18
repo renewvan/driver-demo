@@ -12,7 +12,7 @@ from node_demo.config import load_config
 from node_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC, Controller, parse_enabled
 from node_demo.driver import Driver
 from node_demo.publisher import Publisher
-from node_demo.scenario import load_scenarios
+from node_demo.scenario import load_fleet, load_scenarios
 
 # How long to wait for the broker to hand over the retained `enabled` flag on boot. A retained
 # message arrives right after SUBSCRIBE, so this only bounds a dead or empty broker.
@@ -34,9 +34,10 @@ def main() -> None:
 
     config = load_config()
     scenarios = load_scenarios(config.scenario_dir)
+    fleet = load_fleet(config.scenario_dir)
 
     publisher = Publisher(config.mqtt)
-    controller = Controller(scenarios, publisher)
+    controller = Controller(scenarios, fleet, publisher)
     driver = Driver(controller, publisher)
     controller.set_waker(driver.wake.set)
 

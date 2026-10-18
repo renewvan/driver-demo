@@ -15,13 +15,12 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from node_demo.scenario import TOPIC_ROOT, Scenario, messages_at
+from node_demo.scenario import TOPIC_ROOT, Fleet, Scenario, fleet_messages_at, messages_at
 
 logger = logging.getLogger(__name__)
 
 ENABLED_TOPIC = f"{TOPIC_ROOT}/enabled"
 ENABLED_SET_TOPIC = f"{ENABLED_TOPIC}/set"
-ROUTER_HEALTH_TOPIC = f"{TOPIC_ROOT}/router/health"
 
 
 class PublisherLike(Protocol):
@@ -41,8 +40,11 @@ def parse_enabled(payload: str) -> bool | None:
 
 
 class Controller:
-    def __init__(self, scenarios: Sequence[Scenario], publisher: PublisherLike) -> None:
+    def __init__(
+        self, scenarios: Sequence[Scenario], fleet: Fleet, publisher: PublisherLike
+    ) -> None:
         self._scenarios = list(scenarios)
+        self._fleet = fleet
         self._publisher = publisher
         self._enabled = False
         self._lock = threading.RLock()
@@ -133,9 +135,6 @@ class Controller:
         self._origin = now_tick
         self._publish_tick(0)
         self._published_origin_tick = True
-        if any(s.entity == "router" for s in self._scenarios):
-            self._publisher.publish_raw(ROUTER_HEALTH_TOPIC, "online")
-            self._published.add(ROUTER_HEALTH_TOPIC)
 
     def _disable(self) -> None:
         self._enabled = False
@@ -152,3 +151,10 @@ class Controller:
             for topic, value in messages_at(scenario, relative).items():
                 self._publisher.publish(topic, value)
                 self._published.add(topic)
+        fleet = fleet_messages_at(self._fleet, relative)
+        for topic, info in fleet.info.items():
+            self._publisher.publish(topic, info)
+            self._published.add(topic)
+        for topic, health in fleet.health.items():
+            self._publisher.publish_raw(topic, health)
+            self._published.add(topic)
