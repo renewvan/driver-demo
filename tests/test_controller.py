@@ -1,11 +1,16 @@
 from pathlib import Path
 
 from node_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC, Controller, parse_enabled
-from node_demo.scenario import initial_messages, load_scenarios
+from node_demo.scenario import fleet_messages_at, initial_messages, load_fleet, load_scenarios
 
 SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
 SCENARIOS = load_scenarios(SCENARIO_DIR)
+FLEET = load_fleet(SCENARIO_DIR)
 INITIAL = {t: v for s in SCENARIOS for t, v in initial_messages(s).items()}
+_FLEET_START = fleet_messages_at(FLEET, 0)
+FLEET_INFO = dict(_FLEET_START.info)
+FLEET_HEALTH = dict(_FLEET_START.health)
+FLEET_TOPICS = set(FLEET_INFO) | set(FLEET_HEALTH)
 ROUTER_HEALTH = "renewvan/demo/router/health"
 
 
@@ -45,15 +50,15 @@ class FakePublisher:
 
 def make(enabled=False):
     pub = FakePublisher()
-    c = Controller(SCENARIOS, pub)
+    c = Controller(SCENARIOS, FLEET, pub)
     if enabled:
         c.set_enabled(True)
     return c, pub
 
 
 def van(pub):
-    """Everything published except the switch itself."""
-    return {t: v for t, v in pub.json.items() if t != ENABLED_TOPIC}
+    """Every entity topic published: everything except the switch and the fleet."""
+    return {t: v for t, v in pub.json.items() if t != ENABLED_TOPIC and t not in FLEET_TOPICS}
 
 
 def test_parse_enabled_accepts_only_json_booleans():
@@ -71,21 +76,36 @@ def test_starts_disabled_and_publishes_no_van():
     assert pub.raw == {}
 
 
-def test_enabling_publishes_every_initial_record_and_router_health():
+def test_enabling_publishes_every_initial_record():
     c, pub = make()
     c.start()
     c.set_enabled(True)
     assert pub.json[ENABLED_TOPIC] is True
     assert van(pub) == INITIAL
+
+
+def test_enabling_publishes_the_fleets_info_as_json_and_health_as_bare_words():
+    c, pub = make()
+    c.start()
+    c.set_enabled(True)
+    assert {t: pub.json[t] for t in FLEET_INFO} == FLEET_INFO
+    assert {t: pub.raw[t] for t in FLEET_HEALTH} == FLEET_HEALTH
+    assert set(pub.raw) == set(FLEET_HEALTH), "health is raw; nothing else is"
+
+
+def test_the_routers_demo_health_topic_keeps_its_wire_form():
+    """The router's one-off health topic became the `router` fleet Node: same topic, same
+    bare `online` payload, so a consumer of the old topic sees no change."""
+    c, pub = make(enabled=True)
     assert pub.raw[ROUTER_HEALTH] == "online"
 
 
-def test_disabling_clears_the_van_but_keeps_the_enabled_flag():
+def test_disabling_clears_the_van_and_the_fleet_but_keeps_the_enabled_flag():
     c, pub = make(enabled=True)
     c.set_enabled(False)
     assert pub.json == {ENABLED_TOPIC: False}
     assert pub.raw == {}
-    assert set(pub.cleared) == set(INITIAL) | {ROUTER_HEALTH}
+    assert set(pub.cleared) == set(INITIAL) | FLEET_TOPICS
 
 
 def test_enabling_twice_does_not_restart_the_loop():
@@ -140,7 +160,7 @@ def test_restart_with_retained_enabled_true_resumes_from_the_initial_state():
 def test_shutdown_clears_the_van_and_leaves_the_enabled_flag_for_the_next_boot():
     c, pub = make(enabled=True)
     c.shutdown()
-    assert set(pub.cleared) == set(INITIAL) | {ROUTER_HEALTH}
+    assert set(pub.cleared) == set(INITIAL) | FLEET_TOPICS
     assert pub.json.get(ENABLED_TOPIC) is True
     assert ENABLED_SET_TOPIC not in pub.json
 
@@ -155,7 +175,7 @@ def test_command_handler_never_blocks_the_mqtt_thread():
     assert c.enabled, "the state change is applied by the driver thread, not the MQTT thread"
     c.tick(1)
     assert not c.enabled
-    assert set(pub.cleared) == set(INITIAL) | {ROUTER_HEALTH}
+    assert set(pub.cleared) == set(INITIAL) | FLEET_TOPICS
     assert pub.json[ENABLED_TOPIC] is False
 
 
@@ -197,7 +217,7 @@ def test_switching_on_publishes_every_initial_value_exactly_once():
     tick has the same number. That tick must not replay tick 0 and publish the whole initial
     record a second time (it landed on the right values, so only the traffic doubled)."""
     pub = CountingPublisher()
-    c = Controller(SCENARIOS, pub)
+    c = Controller(SCENARIOS, FLEET, pub)
     c.start()
     c.on_command("true")
     c.apply_pending(7)  # the wake path: applied at tick 7, tick 7 not yet consumed
@@ -209,7 +229,7 @@ def test_switching_on_publishes_every_initial_value_exactly_once():
 
 def test_a_scenario_still_loops_after_a_wake_applied_enable():
     pub = CountingPublisher()
-    c = Controller(SCENARIOS, pub)
+    c = Controller(SCENARIOS, FLEET, pub)
     c.start()
     c.on_command("true")
     c.apply_pending(100)
@@ -224,7 +244,7 @@ def test_a_scenario_still_loops_after_a_wake_applied_enable():
 def test_the_enabled_flag_is_published_only_when_it_changes():
     """A client re-renders on every `enabled` message; repeating an unchanged state is noise."""
     pub = CountingPublisher()
-    c = Controller(SCENARIOS, pub)
+    c = Controller(SCENARIOS, FLEET, pub)
     c.start()
     assert pub.counts[ENABLED_TOPIC] == 1  # boot publishes the state once
     c.on_command("true")
@@ -238,3 +258,75 @@ def test_the_enabled_flag_is_published_only_when_it_changes():
     c.on_command("false")
     c.tick(4)
     assert pub.counts[ENABLED_TOPIC] == 3
+
+
+def flapping_node():
+    """(health topic, tick it first goes offline at, tick it next comes back online at)."""
+    for node in FLEET.nodes:
+        if node.health_timeline:
+            offline = next(s.t for s in node.health_timeline if s.health == "offline")
+            online = next(s.t for s in node.health_timeline if s.t > offline)
+            return node.topic("health"), offline, online
+    raise AssertionError("the fleet has no flapping Node")
+
+
+def test_the_flapping_nodes_health_follows_its_timeline():
+    c, pub = make(enabled=True)
+    topic, offline, online = flapping_node()
+    assert pub.raw[topic] == "online"
+    c.tick(offline - 1)
+    assert pub.raw[topic] == "online"
+    c.tick(offline)
+    assert pub.raw[topic] == "offline"
+    c.tick(online)
+    assert pub.raw[topic] == "online"
+
+
+def test_the_flapping_nodes_health_resets_each_loop():
+    c, pub = make(enabled=True)
+    topic, offline, _ = flapping_node()
+    c.tick(offline)
+    assert pub.raw[topic] == "offline"
+    c.tick(FLEET.loop_s)
+    assert pub.raw[topic] == "online"
+    c.tick(FLEET.loop_s + offline)
+    assert pub.raw[topic] == "offline"
+
+
+def test_the_fleets_info_is_not_republished_mid_loop():
+    pub = CountingPublisher()
+    c = Controller(SCENARIOS, FLEET, pub)
+    c.start()
+    c.on_command("true")
+    c.apply_pending(1)
+    for n in range(1, FLEET.loop_s):
+        c.tick(n)
+    assert {pub.counts[t] for t in FLEET_INFO} == {1}
+
+
+def test_the_fleet_is_not_published_while_disabled():
+    c, pub = make()
+    c.start()
+    for n in range(1, FLEET.loop_s + 1):
+        c.tick(n)
+    assert pub.raw == {}
+    assert not set(pub.json) & FLEET_INFO.keys()
+
+
+def test_re_enabling_republishes_the_initial_fleet_state_including_info():
+    c, pub = make(enabled=True)
+    topic, offline, _ = flapping_node()
+    c.tick(offline)
+    assert pub.raw[topic] == "offline"
+    c.set_enabled(False)
+    assert not FLEET_TOPICS & (set(pub.json) | set(pub.raw))
+    c.set_enabled(True)
+    assert {t: pub.json[t] for t in FLEET_INFO} == FLEET_INFO
+    assert {t: pub.raw[t] for t in FLEET_HEALTH} == FLEET_HEALTH
+
+
+def test_restart_with_retained_enabled_true_republishes_the_fleet():
+    c, pub = make()
+    c.start(retained_enabled=True)
+    assert {t: pub.json[t] for t in FLEET_INFO} == FLEET_INFO
+    assert {t: pub.raw[t] for t in FLEET_HEALTH} == FLEET_HEALTH

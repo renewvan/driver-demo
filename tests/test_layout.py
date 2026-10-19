@@ -5,11 +5,19 @@ view of the consumers that matter, rather than the exact strings.
 
 from pathlib import Path
 
-from node_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC, ROUTER_HEALTH_TOPIC
+from node_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC
 from node_demo.publisher import HEALTH_TOPIC
-from node_demo.scenario import TOPIC_ROOT, initial_messages, load_scenarios
+from node_demo.scenario import (
+    TOPIC_ROOT,
+    fleet_messages_at,
+    initial_messages,
+    load_fleet,
+    load_scenarios,
+)
 
-SCENARIOS = load_scenarios(Path(__file__).resolve().parent.parent / "scenarios")
+SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
+SCENARIOS = load_scenarios(SCENARIO_DIR)
+FLEET = load_fleet(SCENARIO_DIR)
 # Entity domains the real bus and its consumers know (hub schema/*.schema.json, dashboard, logger).
 ENTITY_DOMAINS = {
     "tank",
@@ -22,12 +30,15 @@ ENTITY_DOMAINS = {
     "temperature",
     "tilt",
 }
-NON_ENTITY_TOPICS = [ENABLED_TOPIC, ENABLED_SET_TOPIC, ROUTER_HEALTH_TOPIC, HEALTH_TOPIC]
+NON_ENTITY_TOPICS = [ENABLED_TOPIC, ENABLED_SET_TOPIC, HEALTH_TOPIC]
 
 
 def every_topic():
     for s in SCENARIOS:
         yield from initial_messages(s)
+    start = fleet_messages_at(FLEET, 0)
+    yield from start.info
+    yield from start.health
     yield from NON_ENTITY_TOPICS
 
 

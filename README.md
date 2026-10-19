@@ -5,7 +5,9 @@ developed and shown without a van, a Pi, or hardware. It replays the scenarios i
 [`scenarios/`](scenarios/) on a shared 1 Hz clock under a **separate topic root**,
 `renewvan/demo/`, so demo values never overwrite retained real state (`renewvan/<entity>/...`) and
 never reach the logger / InfluxDB (it only writes four-segment `renewvan/<entity-domain>/<id>/<prop>`
-topics; demo entity topics have five).
+topics; demo entity topics have five). It also publishes a simulated **Node fleet** (each Node's
+info and health) so the dashboard's Device page has something to show. node-demo itself is a
+simulator, not a Node: it has no manifest or info of its own.
 
 Inspired by Venus OS's Demo mode: `dbus-recorder`'s `play.py` replays recordings of real
 services under the same D-Bus service names the real hardware uses, loops them, and resets to
@@ -22,17 +24,21 @@ Authoritative: [`hub/docs/demo-mode.md`](../hub/docs/demo-mode.md).
 | `renewvan/demo/enabled/set` | client → node-demo | JSON `true` / `false`, not retained: the command |
 | `renewvan/demo/enabled` | node-demo → bus | JSON `true` / `false`, retained: the shared state every client follows |
 | `renewvan/demo/<entity>/<id>/<property>` | node-demo → bus | `json.dumps(value)`, retained, QoS 1 (identical encoding to `renewvan/...`), only while on |
-| `renewvan/demo/health` | node-demo → bus | bare `online` / `offline` (LWT), retained |
-| `renewvan/demo/router/health` | node-demo → bus | bare `online` while on and a router scenario exists |
+| `renewvan/demo/health` | node-demo → bus | bare `online` / `offline` (LWT), retained: node-demo's own last-will topic |
+| `renewvan/demo/<node>/info` | node-demo → bus | Node info JSON from the fleet file, retained, only while on; absent for a Node declared with no info |
+| `renewvan/demo/<node>/health` | node-demo → bus | bare `online` / `offline` per the fleet file, retained, only while on (includes `renewvan/demo/router/health`) |
 
 node-demo always runs and is **idle until switched on**: one MQTT connection and a 1 Hz tick that
 publishes nothing. Any client turns the demo on or off for everyone by publishing the command.
 
 - **Enabled:** every property of every scenario's `initial` record is published, then at `t`
-  seconds into the loop only the properties of the timeline step at `t`. Every scenario restarts
-  at its beginning each time the demo is switched on; a repeated `true` does not restart it.
-- **Disabled:** every simulated topic is cleared (empty retained payload, the ADR 0008 "no value"
-  convention) and `enabled` is republished as `false`.
+  seconds into the loop only the properties of the timeline step at `t`. The fleet's info and
+  health are published at loop start; the flapping Node's health then follows its
+  `health_timeline` and resets at each loop restart. Every scenario and the fleet restart at their
+  beginning each time the demo is switched on; a repeated `true` does not restart it.
+- **Disabled:** every simulated topic, including every simulated Node's info and health, is
+  cleared (empty retained payload, the ADR 0008 "no value" convention) and `enabled` is
+  republished as `false`.
 - **Boot:** a retained `enabled: true` resumes the demo from the initial state; no retained
   value means off.
 - **`SIGTERM`/`SIGINT`:** the van is cleared and the broker's acknowledgements awaited, then
@@ -47,15 +53,18 @@ publishes nothing. Any client turns the demo on or off for everyone by publishin
 only queues the request and the 1 Hz driver thread applies it (waiting for acks on the network
 thread deadlocks until the timeout and nothing is cleared).
 
-## Scenarios
+## Scenarios and fleet
 
 Owned by the hub repo (`hub/schema/demo/`, the source of truth, validated by
 `hub/schema/validate-demo.py`). `scenarios/` here is a committed copy so CI and `docker build`
-are self-contained. Refresh it after changing the hub scenarios:
+are self-contained. Refresh it after changing the hub files:
 
 ```bash
-scripts/sync-scenarios.sh        # copies ../hub/schema/demo/*.demo.json into scenarios/
+scripts/sync-scenarios.sh   # copies ../hub/schema/demo/*.demo.json and *.demo-fleet.json
 ```
+
+The fleet is one separate file, `scenarios/fleet.demo-fleet.json`, read by its own loader
+(`load_fleet`); the entity loader's `*.demo.json` glob never matches it.
 
 `tests/test_scenarios_in_sync.py` fails when `../hub` is present and the copy has drifted.
 
@@ -67,7 +76,7 @@ scripts/sync-scenarios.sh        # copies ../hub/schema/demo/*.demo.json into sc
 | `MQTT_PORT` | `1883` | |
 | `MQTT_USERNAME` | _(none)_ | |
 | `MQTT_PASSWORD` | _(none)_ | |
-| `DEMO_SCENARIO_DIR` | `/app/scenarios` | directory of `*.demo.json` (baked into the image) |
+| `DEMO_SCENARIO_DIR` | `/app/scenarios` | directory of `*.demo.json` and the one `*.demo-fleet.json` (baked into the image) |
 
 ## Running
 
@@ -99,7 +108,8 @@ No broker needed: `scenario.py` and `controller.py` are pure and the driver is t
 controller and clock. The unit tests cannot see broker behaviour though (a fake publisher hid a
 deadlock on the MQTT thread), so after changing the controller or publisher, run it against a
 real mosquitto: toggle `enabled/set` from a second client, then confirm with
-`mosquitto_sub -t 'renewvan/demo/#' --retained-only` that the van is gone after `false`.
+`mosquitto_sub -t 'renewvan/demo/#' --retained-only` that the van and the fleet are gone after
+`false`.
 
 ## Releasing
 
