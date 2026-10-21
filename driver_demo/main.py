@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""node-demo entrypoint."""
+"""driver-demo entrypoint."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ import logging
 import signal
 import threading
 
-from node_demo.config import load_config
-from node_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC, Controller, parse_enabled
-from node_demo.driver import Driver
-from node_demo.publisher import Publisher
-from node_demo.scenario import load_fleet, load_scenarios
+from driver_demo.config import load_config
+from driver_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC, Controller, parse_enabled
+from driver_demo.driver import Driver
+from driver_demo.publisher import Publisher
+from driver_demo.scenario import load_fleet, load_scenarios
 
 # How long to wait for the broker to hand over the retained `enabled` flag on boot. A retained
 # message arrives right after SUBSCRIBE, so this only bounds a dead or empty broker.
@@ -21,7 +21,7 @@ RETAINED_WAIT_S = 2.0
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="node-demo: simulated van published under renewvan/demo/, switched on and off "
+        description="driver-demo: simulated van published under renewvan/demo/, switched on/off "
         "by renewvan/demo/enabled/set"
     )
     parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging")

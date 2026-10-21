@@ -1,5 +1,5 @@
 """Persistent MQTT connection to the renewvan bus, publishing under the separate
-`renewvan/demo/` namespace. Same encoding as node-router's publisher (JSON value, retained,
+`renewvan/demo/` namespace. Same encoding as driver-router's publisher (JSON value, retained,
 QoS 1, LWT on the health topic) so consumers read demo data with the same code.
 """
 
@@ -12,8 +12,8 @@ from collections.abc import Callable
 
 import paho.mqtt.client as mqtt
 
-from node_demo.config import MqttConfig
-from node_demo.scenario import TOPIC_ROOT
+from driver_demo.config import MqttConfig
+from driver_demo.scenario import TOPIC_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,8 @@ class Publisher:
     def __init__(self, config: MqttConfig) -> None:
         self._config = config
         # Clean session: all state is in retained topics, and a persistent session would replay
-        # any `/set` command queued while this node was down, flipping the demo on a restart.
-        self._client = mqtt.Client(client_id="node-demo", clean_session=True)
+        # any `/set` command queued while this device was down, flipping the demo on a restart.
+        self._client = mqtt.Client(client_id="driver-demo", clean_session=True)
         if config.username:
             self._client.username_pw_set(config.username, config.password)
         self._client.will_set(HEALTH_TOPIC, payload="offline", qos=1, retain=True)

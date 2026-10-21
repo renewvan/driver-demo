@@ -5,9 +5,9 @@ view of the consumers that matter, rather than the exact strings.
 
 from pathlib import Path
 
-from node_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC
-from node_demo.publisher import HEALTH_TOPIC
-from node_demo.scenario import (
+from driver_demo.controller import ENABLED_SET_TOPIC, ENABLED_TOPIC
+from driver_demo.publisher import HEALTH_TOPIC
+from driver_demo.scenario import (
     TOPIC_ROOT,
     fleet_messages_at,
     initial_messages,

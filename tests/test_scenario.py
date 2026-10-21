@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from node_demo.scenario import (
+from driver_demo.scenario import (
     Scenario,
     Step,
     fleet_from_dict,
@@ -117,7 +117,7 @@ def test_t0_step_overlays_initial_on_reset():
 
 def test_the_entity_loader_does_not_load_the_fleet_file(scenarios):
     """Loading the fleet file as an entity scenario fails (it has no `entity`), so the entity
-    loader must never see it: node-demo would not start."""
+    loader must never see it: driver-demo would not start."""
     fleet_file = SCENARIO_DIR / "fleet.demo-fleet.json"
     assert fleet_file.is_file()
     with pytest.raises(KeyError):
@@ -129,9 +129,9 @@ def test_the_entity_loader_does_not_load_the_fleet_file(scenarios):
 def test_load_fleet_reads_the_fleet_file():
     fleet = load_fleet(SCENARIO_DIR)
     assert fleet.loop_s > 0
-    assert any(n.node == "router" for n in fleet.nodes)
-    assert any(n.info is None for n in fleet.nodes), "a Node with no info is part of the fleet"
-    assert sum(1 for n in fleet.nodes if n.health_timeline) == 1, "exactly one Node flaps"
+    assert any(n.device == "router" for n in fleet.devices)
+    assert any(n.info is None for n in fleet.devices), "a Device with no info is part of the fleet"
+    assert sum(1 for n in fleet.devices if n.health_timeline) == 1, "exactly one Device flaps"
 
 
 def test_load_fleet_missing_file_fails(tmp_path):
@@ -139,43 +139,43 @@ def test_load_fleet_missing_file_fails(tmp_path):
         load_fleet(tmp_path)
 
 
-def a_fleet(*nodes, loop_s=10):
-    return fleet_from_dict({"description": "d", "loop_s": loop_s, "nodes": list(nodes)})
+def a_fleet(*devices, loop_s=10):
+    return fleet_from_dict({"description": "d", "loop_s": loop_s, "devices": list(devices)})
 
 
 def test_fleet_start_publishes_info_as_json_and_health_as_a_bare_word():
-    info = {"node": "tank", "product": "Tank", "version": "dev"}
-    fleet = a_fleet({"node": "tank", "health": "online", "info": info})
+    info = {"device": "tank", "product": "Tank", "version": "dev"}
+    fleet = a_fleet({"device": "tank", "health": "online", "info": info})
     msgs = fleet_messages_at(fleet, 0)
     assert msgs.info == {"renewvan/demo/tank/info": info}
     assert msgs.health == {"renewvan/demo/tank/health": "online"}
 
 
-def test_a_node_declared_with_no_info_publishes_only_health():
-    fleet = a_fleet({"node": "gps", "health": "online"})
+def test_a_device_declared_with_no_info_publishes_only_health():
+    fleet = a_fleet({"device": "gps", "health": "online"})
     msgs = fleet_messages_at(fleet, 0)
     assert msgs.info == {}
     assert msgs.health == {"renewvan/demo/gps/health": "online"}
 
 
-def test_an_offline_node_keeps_its_info():
-    fleet = a_fleet({"node": "tilt", "health": "offline", "info": {"node": "tilt"}})
+def test_an_offline_device_keeps_its_info():
+    fleet = a_fleet({"device": "tilt", "health": "offline", "info": {"device": "tilt"}})
     msgs = fleet_messages_at(fleet, 0)
     assert msgs.health == {"renewvan/demo/tilt/health": "offline"}
     assert "renewvan/demo/tilt/info" in msgs.info
 
 
 def test_info_is_published_only_at_loop_start():
-    fleet = a_fleet({"node": "tank", "health": "online", "info": {"node": "tank"}})
+    fleet = a_fleet({"device": "tank", "health": "online", "info": {"device": "tank"}})
     assert fleet_messages_at(fleet, 3).info == {}
-    assert fleet_messages_at(fleet, 10).info == {"renewvan/demo/tank/info": {"node": "tank"}}
+    assert fleet_messages_at(fleet, 10).info == {"renewvan/demo/tank/info": {"device": "tank"}}
 
 
 def flapping(loop_s=10):
     return a_fleet(
-        {"node": "steady", "health": "online"},
+        {"device": "steady", "health": "online"},
         {
-            "node": "router",
+            "device": "router",
             "health": "online",
             "health_timeline": [{"t": 4, "health": "offline"}, {"t": 7, "health": "online"}],
         },
@@ -183,7 +183,7 @@ def flapping(loop_s=10):
     )
 
 
-def test_the_flapping_nodes_health_follows_its_timeline():
+def test_the_flapping_devices_health_follows_its_timeline():
     fleet = flapping()
     topic = "renewvan/demo/router/health"
     assert fleet_messages_at(fleet, 0).health[topic] == "online"
@@ -193,11 +193,11 @@ def test_the_flapping_nodes_health_follows_its_timeline():
     assert fleet_messages_at(fleet, 7).health == {topic: "online"}
 
 
-def test_the_flapping_nodes_health_resets_each_loop():
+def test_the_flapping_devices_health_resets_each_loop():
     """Reset is the republish of `health` at loop start, so a loop that ends offline recovers."""
     fleet = a_fleet(
         {
-            "node": "router",
+            "device": "router",
             "health": "online",
             "health_timeline": [{"t": 6, "health": "offline"}],
         }
@@ -210,13 +210,13 @@ def test_the_flapping_nodes_health_resets_each_loop():
 
 def test_a_t0_health_step_overlays_the_loop_start_health():
     fleet = a_fleet(
-        {"node": "r", "health": "online", "health_timeline": [{"t": 0, "health": "offline"}]}
+        {"device": "r", "health": "online", "health_timeline": [{"t": 0, "health": "offline"}]}
     )
     assert fleet_messages_at(fleet, 10).health == {"renewvan/demo/r/health": "offline"}
 
 
 def test_fleet_topics_are_never_an_entity_topic():
-    """An entity topic is `renewvan/demo/<entity>/<id>/<property>` (five segments). A Node's
+    """An entity topic is `renewvan/demo/<entity>/<id>/<property>` (five segments). A Device's
     `info` and `health` have four, so no consumer can read one as an entity property."""
     msgs = fleet_messages_at(load_fleet(SCENARIO_DIR), 0)
     assert msgs.info and msgs.health

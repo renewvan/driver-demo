@@ -1,7 +1,7 @@
 """The shared Demo mode switch: `renewvan/demo/enabled` (state, retained) and
 `renewvan/demo/enabled/set` (command), the same `<topic>` / `<topic>/set` convention as the kiosk
 settings. Any client can publish the command, so toggling demo mode in one dashboard starts the
-simulated van for every other client; node-demo itself always runs and is idle while disabled.
+simulated van for every other client; driver-demo itself always runs and is idle while disabled.
 
 Threading: commands arrive on paho's network thread, which is also the thread that receives the
 broker's acknowledgements. Waiting for those acks there deadlocks, so `on_command` only records
@@ -15,7 +15,7 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from node_demo.scenario import TOPIC_ROOT, Fleet, Scenario, fleet_messages_at, messages_at
+from driver_demo.scenario import TOPIC_ROOT, Fleet, Scenario, fleet_messages_at, messages_at
 
 logger = logging.getLogger(__name__)
 

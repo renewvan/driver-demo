@@ -1,5 +1,5 @@
 [project]
-name = "node-demo"
+name = "driver-demo"
 version = "0.3.0"
 description = "Demo mode: a simulated van published under the renewvan/demo/ MQTT topic namespace"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["node_demo*"]
+include = ["driver_demo*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,5 +1,5 @@
 """Config sourced from environment variables — matches `hub`'s
-`docker-compose.yml` `node-demo:` service block.
+`docker-compose.yml` `driver-demo:` service block.
 """
 
 from __future__ import annotations

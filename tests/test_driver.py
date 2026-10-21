@@ -1,6 +1,6 @@
 import threading
 
-from node_demo.driver import Driver
+from driver_demo.driver import Driver
 
 
 class FakeController:
