@@ -113,5 +113,15 @@ real mosquitto: toggle `enabled/set` from a second client, then confirm with
 
 ## Releasing
 
-Tagging a GitHub release builds and publishes `ghcr.io/<owner>/driver-demo:<tag>`, which `hub`'s
-deployment compose file pins by tag (never builds from source).
+Start a release from **Actions → Release → Run workflow**, or
+`gh workflow run release.yml -f bump=minor` (`patch`, `major`, or `-f version=0.2.0`
+to set it explicitly). One run works out the next version from the latest `v*` tag,
+tags `main`, creates the GitHub release and builds and publishes
+`ghcr.io/<owner>/driver-demo:<tag>` (and `:latest`), which `hub`'s deployment compose
+file pins by tag (never builds from source — see
+`hub/docs/adr/0001-compose-services-via-pinned-images-not-git-submodules.md`).
+
+A beta from a feature branch: dispatch the workflow on that branch with **prerelease**
+ticked. It runs the tests, publishes only its own tag (never `:latest`) and writes nothing
+to `main`. The process is shared by every renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`);
+this repo's `release.yml` only says what it ships.
