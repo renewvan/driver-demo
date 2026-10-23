@@ -94,7 +94,7 @@ def test_enabling_publishes_the_fleets_info_as_json_and_health_as_bare_words():
 
 
 def test_the_routers_demo_health_topic_keeps_its_wire_form():
-    """The router's one-off health topic became the `router` fleet Device: same topic, same
+    """The router's one-off health topic became the `router` fleet Driver: same topic, same
     bare `online` payload, so a consumer of the old topic sees no change."""
     c, pub = make(enabled=True)
     assert pub.raw[ROUTER_HEALTH] == "online"
@@ -260,19 +260,19 @@ def test_the_enabled_flag_is_published_only_when_it_changes():
     assert pub.counts[ENABLED_TOPIC] == 3
 
 
-def flapping_device():
+def flapping_driver():
     """(health topic, tick it first goes offline at, tick it next comes back online at)."""
-    for device in FLEET.devices:
-        if device.health_timeline:
-            offline = next(s.t for s in device.health_timeline if s.health == "offline")
-            online = next(s.t for s in device.health_timeline if s.t > offline)
-            return device.topic("health"), offline, online
-    raise AssertionError("the fleet has no flapping Device")
+    for driver in FLEET.drivers:
+        if driver.health_timeline:
+            offline = next(s.t for s in driver.health_timeline if s.health == "offline")
+            online = next(s.t for s in driver.health_timeline if s.t > offline)
+            return driver.topic("health"), offline, online
+    raise AssertionError("the fleet has no flapping Driver")
 
 
-def test_the_flapping_devices_health_follows_its_timeline():
+def test_the_flapping_drivers_health_follows_its_timeline():
     c, pub = make(enabled=True)
-    topic, offline, online = flapping_device()
+    topic, offline, online = flapping_driver()
     assert pub.raw[topic] == "online"
     c.tick(offline - 1)
     assert pub.raw[topic] == "online"
@@ -282,9 +282,9 @@ def test_the_flapping_devices_health_follows_its_timeline():
     assert pub.raw[topic] == "online"
 
 
-def test_the_flapping_devices_health_resets_each_loop():
+def test_the_flapping_drivers_health_resets_each_loop():
     c, pub = make(enabled=True)
-    topic, offline, _ = flapping_device()
+    topic, offline, _ = flapping_driver()
     c.tick(offline)
     assert pub.raw[topic] == "offline"
     c.tick(FLEET.loop_s)
@@ -315,7 +315,7 @@ def test_the_fleet_is_not_published_while_disabled():
 
 def test_re_enabling_republishes_the_initial_fleet_state_including_info():
     c, pub = make(enabled=True)
-    topic, offline, _ = flapping_device()
+    topic, offline, _ = flapping_driver()
     c.tick(offline)
     assert pub.raw[topic] == "offline"
     c.set_enabled(False)

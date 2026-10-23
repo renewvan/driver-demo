@@ -4,7 +4,7 @@ A scenario file (`<entity>[.<name>].demo.json`, envelope `hub/schema/demo.schema
 holds one complete `initial` record and timeline steps that overlay `set` at `t` seconds
 into a loop of `loop_s` seconds. See hub/docs/demo-mode.md.
 
-The simulated Device fleet is a separate hub-owned file (`*.demo-fleet.json`, envelope
+The simulated Driver fleet is a separate hub-owned file (`*.demo-fleet.json`, envelope
 `hub/schema/demo-fleet.schema.json`) with its own loader: the entity glob never matches it.
 
 No I/O except `load_scenarios` and `load_fleet`.
@@ -68,21 +68,21 @@ class HealthStep:
 
 
 @dataclass(frozen=True)
-class FleetDevice:
-    device: str
+class FleetDriver:
+    driver: str
     health: str
     info: dict[str, Any] | None
     health_timeline: tuple[HealthStep, ...]
 
     def topic(self, leaf: str) -> str:
-        return f"{TOPIC_ROOT}/{self.device}/{leaf}"
+        return f"{TOPIC_ROOT}/{self.driver}/{leaf}"
 
 
 @dataclass(frozen=True)
 class Fleet:
     description: str
     loop_s: int
-    devices: tuple[FleetDevice, ...]
+    drivers: tuple[FleetDriver, ...]
 
 
 @dataclass(frozen=True)
@@ -97,16 +97,16 @@ def fleet_from_dict(doc: dict[str, Any]) -> Fleet:
     return Fleet(
         description=doc["description"],
         loop_s=doc["loop_s"],
-        devices=tuple(
-            FleetDevice(
-                device=n["device"],
+        drivers=tuple(
+            FleetDriver(
+                driver=n["driver"],
                 health=n["health"],
                 info=dict(n["info"]) if "info" in n else None,
                 health_timeline=tuple(
                     HealthStep(t=s["t"], health=s["health"]) for s in n.get("health_timeline", ())
                 ),
             )
-            for n in doc["devices"]
+            for n in doc["drivers"]
         ),
     )
 
@@ -124,20 +124,20 @@ def load_fleet(directory: Path | str) -> Fleet:
 def fleet_messages_at(fleet: Fleet, tick: int) -> FleetMessages:
     """Topics to publish at integer second `tick` (wrapped by `loop_s`).
 
-    At loop start every Device's `health` (and `info`, when it has one); a `t == 0` health step
+    At loop start every Driver's `health` (and `info`, when it has one); a `t == 0` health step
     overlays it. Otherwise only the health of the steps whose `t` equals the loop phase.
     """
     phase = tick % fleet.loop_s
     info: dict[str, Any] = {}
     health: dict[str, str] = {}
-    for device in fleet.devices:
+    for driver in fleet.drivers:
         if phase == 0:
-            health[device.topic("health")] = device.health
-            if device.info is not None:
-                info[device.topic("info")] = device.info
-        for step in device.health_timeline:
+            health[driver.topic("health")] = driver.health
+            if driver.info is not None:
+                info[driver.topic("info")] = driver.info
+        for step in driver.health_timeline:
             if step.t == phase:
-                health[device.topic("health")] = step.health
+                health[driver.topic("health")] = step.health
     return FleetMessages(info=info, health=health)
 
 

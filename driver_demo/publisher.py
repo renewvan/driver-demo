@@ -24,7 +24,7 @@ class Publisher:
     def __init__(self, config: MqttConfig) -> None:
         self._config = config
         # Clean session: all state is in retained topics, and a persistent session would replay
-        # any `/set` command queued while this device was down, flipping the demo on a restart.
+        # any `/set` command queued while driver-demo was down, flipping the demo on a restart.
         self._client = mqtt.Client(client_id="driver-demo", clean_session=True)
         if config.username:
             self._client.username_pw_set(config.username, config.password)
