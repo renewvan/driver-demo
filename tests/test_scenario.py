@@ -129,9 +129,9 @@ def test_the_entity_loader_does_not_load_the_fleet_file(scenarios):
 def test_load_fleet_reads_the_fleet_file():
     fleet = load_fleet(SCENARIO_DIR)
     assert fleet.loop_s > 0
-    assert any(n.device == "router" for n in fleet.devices)
-    assert any(n.info is None for n in fleet.devices), "a Device with no info is part of the fleet"
-    assert sum(1 for n in fleet.devices if n.health_timeline) == 1, "exactly one Device flaps"
+    assert any(n.driver == "router" for n in fleet.drivers)
+    assert any(n.info is None for n in fleet.drivers), "a Driver with no info is part of the fleet"
+    assert sum(1 for n in fleet.drivers if n.health_timeline) == 1, "exactly one Driver flaps"
 
 
 def test_load_fleet_missing_file_fails(tmp_path):
@@ -139,43 +139,43 @@ def test_load_fleet_missing_file_fails(tmp_path):
         load_fleet(tmp_path)
 
 
-def a_fleet(*devices, loop_s=10):
-    return fleet_from_dict({"description": "d", "loop_s": loop_s, "devices": list(devices)})
+def a_fleet(*drivers, loop_s=10):
+    return fleet_from_dict({"description": "d", "loop_s": loop_s, "drivers": list(drivers)})
 
 
 def test_fleet_start_publishes_info_as_json_and_health_as_a_bare_word():
-    info = {"device": "tank", "product": "Tank", "version": "dev"}
-    fleet = a_fleet({"device": "tank", "health": "online", "info": info})
+    info = {"driver": "tank", "product": "Tank", "version": "dev"}
+    fleet = a_fleet({"driver": "tank", "health": "online", "info": info})
     msgs = fleet_messages_at(fleet, 0)
     assert msgs.info == {"renewvan/demo/tank/info": info}
     assert msgs.health == {"renewvan/demo/tank/health": "online"}
 
 
-def test_a_device_declared_with_no_info_publishes_only_health():
-    fleet = a_fleet({"device": "gps", "health": "online"})
+def test_a_driver_declared_with_no_info_publishes_only_health():
+    fleet = a_fleet({"driver": "gps", "health": "online"})
     msgs = fleet_messages_at(fleet, 0)
     assert msgs.info == {}
     assert msgs.health == {"renewvan/demo/gps/health": "online"}
 
 
-def test_an_offline_device_keeps_its_info():
-    fleet = a_fleet({"device": "tilt", "health": "offline", "info": {"device": "tilt"}})
+def test_an_offline_driver_keeps_its_info():
+    fleet = a_fleet({"driver": "tilt", "health": "offline", "info": {"driver": "tilt"}})
     msgs = fleet_messages_at(fleet, 0)
     assert msgs.health == {"renewvan/demo/tilt/health": "offline"}
     assert "renewvan/demo/tilt/info" in msgs.info
 
 
 def test_info_is_published_only_at_loop_start():
-    fleet = a_fleet({"device": "tank", "health": "online", "info": {"device": "tank"}})
+    fleet = a_fleet({"driver": "tank", "health": "online", "info": {"driver": "tank"}})
     assert fleet_messages_at(fleet, 3).info == {}
-    assert fleet_messages_at(fleet, 10).info == {"renewvan/demo/tank/info": {"device": "tank"}}
+    assert fleet_messages_at(fleet, 10).info == {"renewvan/demo/tank/info": {"driver": "tank"}}
 
 
 def flapping(loop_s=10):
     return a_fleet(
-        {"device": "steady", "health": "online"},
+        {"driver": "steady", "health": "online"},
         {
-            "device": "router",
+            "driver": "router",
             "health": "online",
             "health_timeline": [{"t": 4, "health": "offline"}, {"t": 7, "health": "online"}],
         },
@@ -183,7 +183,7 @@ def flapping(loop_s=10):
     )
 
 
-def test_the_flapping_devices_health_follows_its_timeline():
+def test_the_flapping_drivers_health_follows_its_timeline():
     fleet = flapping()
     topic = "renewvan/demo/router/health"
     assert fleet_messages_at(fleet, 0).health[topic] == "online"
@@ -193,11 +193,11 @@ def test_the_flapping_devices_health_follows_its_timeline():
     assert fleet_messages_at(fleet, 7).health == {topic: "online"}
 
 
-def test_the_flapping_devices_health_resets_each_loop():
+def test_the_flapping_drivers_health_resets_each_loop():
     """Reset is the republish of `health` at loop start, so a loop that ends offline recovers."""
     fleet = a_fleet(
         {
-            "device": "router",
+            "driver": "router",
             "health": "online",
             "health_timeline": [{"t": 6, "health": "offline"}],
         }
@@ -210,15 +210,53 @@ def test_the_flapping_devices_health_resets_each_loop():
 
 def test_a_t0_health_step_overlays_the_loop_start_health():
     fleet = a_fleet(
-        {"device": "r", "health": "online", "health_timeline": [{"t": 0, "health": "offline"}]}
+        {"driver": "r", "health": "online", "health_timeline": [{"t": 0, "health": "offline"}]}
     )
     assert fleet_messages_at(fleet, 10).health == {"renewvan/demo/r/health": "offline"}
 
 
 def test_fleet_topics_are_never_an_entity_topic():
-    """An entity topic is `renewvan/demo/<entity>/<id>/<property>` (five segments). A Device's
+    """An entity topic is `renewvan/demo/<entity>/<id>/<property>` (five segments). A Driver's
     `info` and `health` have four, so no consumer can read one as an entity property."""
     msgs = fleet_messages_at(load_fleet(SCENARIO_DIR), 0)
     assert msgs.info and msgs.health
     for topic in (*msgs.info, *msgs.health):
         assert topic.startswith("renewvan/demo/") and len(topic.split("/")) == 4
+
+
+def test_identity_fields_are_published_retained_like_any_other_initial_property():
+    """`driver` and `name` in a scenario's `initial` ride the same generic path as every other
+    property: `renewvan/demo/<entity>/<id>/driver|name`, JSON-encoded, at every loop start."""
+    s = scenario_from_dict(
+        {
+            "entity": "battery",
+            "id": "wattcycle",
+            "description": "d",
+            "loop_s": 10,
+            "initial": {"driver": "wattcycle", "name": "WattCycle bank", "soc_pct": 80},
+            "timeline": [{"t": 5, "set": {"soc_pct": 79}}],
+        }
+    )
+    expected = {
+        "renewvan/demo/battery/wattcycle/driver": "wattcycle",
+        "renewvan/demo/battery/wattcycle/name": "WattCycle bank",
+        "renewvan/demo/battery/wattcycle/soc_pct": 80,
+    }
+    assert messages_at(s, 0) == expected
+    assert messages_at(s, 10) == expected
+    assert messages_at(s, 5) == {"renewvan/demo/battery/wattcycle/soc_pct": 79}
+
+
+def test_every_scenario_that_names_a_driver_names_one_in_the_fleet(scenarios):
+    """A scenario `driver` is the owning Driver's key, so it must be a fleet entry (the dashboard
+    joins on it). Scenarios without it are legacy and stay valid."""
+    keys = {d.driver for d in load_fleet(SCENARIO_DIR).drivers}
+    for s in scenarios:
+        if "driver" in s.initial:
+            assert s.initial["driver"] in keys, f"{s.entity}.{s.id}"
+
+
+def test_the_demo_van_has_two_battery_sources(scenarios):
+    batteries = [s for s in scenarios if s.entity == "battery"]
+    assert len(batteries) >= 2
+    assert len({s.id for s in batteries}) == len(batteries)

@@ -5,9 +5,10 @@ developed and shown without a van, a Pi, or hardware. It replays the scenarios i
 [`scenarios/`](scenarios/) on a shared 1 Hz clock under a **separate topic root**,
 `renewvan/demo/`, so demo values never overwrite retained real state (`renewvan/<entity>/...`) and
 never reach the logger / InfluxDB (it only writes four-segment `renewvan/<entity-domain>/<id>/<prop>`
-topics; demo entity topics have five). It also publishes a simulated **Device fleet** (each Device's
-info and health) so the dashboard's Device page has something to show. driver-demo itself is a
-simulator, not a Device: it has no manifest or info of its own.
+topics; demo entity topics have five). It also publishes a simulated **Driver fleet** (each Driver's
+info and health) so the dashboard's Driver page has something to show. driver-demo is the
+simulator, **not a Driver** in the renewvan glossary sense: it has no manifest or info of its own,
+and the repo keeps its `driver-demo` artifact name only for historical reasons.
 
 Inspired by Venus OS's Demo mode: `dbus-recorder`'s `play.py` replays recordings of real
 services under the same D-Bus service names the real hardware uses, loops them, and resets to
@@ -23,20 +24,20 @@ Authoritative: [`hub/docs/demo-mode.md`](../hub/docs/demo-mode.md).
 |---|---|---|
 | `renewvan/demo/enabled/set` | client → driver-demo | JSON `true` / `false`, not retained: the command |
 | `renewvan/demo/enabled` | driver-demo → bus | JSON `true` / `false`, retained: the shared state every client follows |
-| `renewvan/demo/<entity>/<id>/<property>` | driver-demo → bus | `json.dumps(value)`, retained, QoS 1 (identical encoding to `renewvan/...`), only while on |
+| `renewvan/demo/<entity>/<id>/<property>` | driver-demo → bus | `json.dumps(value)`, retained, QoS 1 (identical encoding to `renewvan/...`), only while on. Every key of a scenario's `initial` record goes out generically, so the identity fields `driver` (the owning Driver's key) and `name` are published like any other property |
 | `renewvan/demo/health` | driver-demo → bus | bare `online` / `offline` (LWT), retained: driver-demo's own last-will topic |
-| `renewvan/demo/<device>/info` | driver-demo → bus | Device info JSON from the fleet file, retained, only while on; absent for a Device declared with no info |
-| `renewvan/demo/<device>/health` | driver-demo → bus | bare `online` / `offline` per the fleet file, retained, only while on (includes `renewvan/demo/router/health`) |
+| `renewvan/demo/<driver>/info` | driver-demo → bus | Driver info JSON from the fleet file, retained, only while on; absent for a Driver declared with no info |
+| `renewvan/demo/<driver>/health` | driver-demo → bus | bare `online` / `offline` per the fleet file, retained, only while on (includes `renewvan/demo/router/health`) |
 
 driver-demo always runs and is **idle until switched on**: one MQTT connection and a 1 Hz tick that
 publishes nothing. Any client turns the demo on or off for everyone by publishing the command.
 
 - **Enabled:** every property of every scenario's `initial` record is published, then at `t`
   seconds into the loop only the properties of the timeline step at `t`. The fleet's info and
-  health are published at loop start; the flapping Device's health then follows its
+  health are published at loop start; the flapping Driver's health then follows its
   `health_timeline` and resets at each loop restart. Every scenario and the fleet restart at their
   beginning each time the demo is switched on; a repeated `true` does not restart it.
-- **Disabled:** every simulated topic, including every simulated Device's info and health, is
+- **Disabled:** every simulated topic, including every simulated Driver's info and health, is
   cleared (empty retained payload, the ADR 0008 "no value" convention) and `enabled` is
   republished as `false`.
 - **Boot:** a retained `enabled: true` resumes the demo from the initial state; no retained
@@ -47,7 +48,7 @@ publishes nothing. Any client turns the demo on or off for everyone by publishin
 - Anything but a JSON boolean on `enabled/set` is ignored and logged.
 - Entity command topics (`.../set`) are not simulated; demo state is read-only.
 - It uses a clean MQTT session: all state is in retained topics, and a persistent session would
-  replay a `/set` queued while the device was down.
+  replay a `/set` queued while driver-demo was down.
 
 `/set` runs on paho's network thread, which also receives the broker's acknowledgements, so it
 only queues the request and the 1 Hz driver thread applies it (waiting for acks on the network
@@ -63,8 +64,10 @@ are self-contained. Refresh it after changing the hub files:
 scripts/sync-scenarios.sh   # copies ../hub/schema/demo/*.demo.json and *.demo-fleet.json
 ```
 
-The fleet is one separate file, `scenarios/fleet.demo-fleet.json`, read by its own loader
-(`load_fleet`); the entity loader's `*.demo.json` glob never matches it.
+The fleet is one separate file, `scenarios/fleet.demo-fleet.json` (`drivers[]`, each entry keyed
+by `driver`), read by its own loader (`load_fleet`); the entity loader's `*.demo.json` glob never
+matches it. The script copies every `*.demo.json`, so a new scenario file (for example the
+second battery, `battery.wattcycle.demo.json`) needs no script, Dockerfile, or loader change.
 
 `tests/test_scenarios_in_sync.py` fails when `../hub` is present and the copy has drifted.
 
