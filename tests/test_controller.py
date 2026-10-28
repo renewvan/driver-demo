@@ -236,7 +236,9 @@ def test_a_scenario_still_loops_after_a_wake_applied_enable():
     topic, initial, at = a_property_that_moves()
     c.tick(100 + at)
     assert pub.json[topic] != initial
-    loop = max(s.loop_s for s in SCENARIOS)
+    # The moving property's own scenario loops on its own period (the heater's is longer).
+    owner = next(s for s in SCENARIOS if topic.startswith(f"renewvan/demo/{s.entity}/{s.id}/"))
+    loop = owner.loop_s
     c.tick(100 + loop)  # one full loop later: back to the initial record
     assert pub.json[topic] == initial
 
