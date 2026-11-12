@@ -3,3 +3,6 @@
 .pytest_cache/
 __pycache__/
 .ruff_cache/
+
+# Local scratch notes; never committed
+.scratch/
