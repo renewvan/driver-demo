@@ -1,13 +1,13 @@
 # driver-demo
 
-A simulated van on the renewvan bus, so the dashboard (and any other consumer) can be
+A simulated van on the Renewvan bus, so the dashboard (and any other consumer) can be
 developed and shown without a van, a Pi, or hardware. It replays the scenarios in
 [`scenarios/`](scenarios/) on a shared 1 Hz clock under a **separate topic root**,
 `renewvan/demo/`, so demo values never overwrite retained real state (`renewvan/<entity>/...`) and
 never reach the logger / InfluxDB (it only writes four-segment `renewvan/<entity-domain>/<id>/<prop>`
 topics; demo entity topics have five). It also publishes a simulated **Driver fleet** (each Driver's
 info and health) so the dashboard's Driver page has something to show. driver-demo is the
-simulator, **not a Driver** in the renewvan glossary sense: it has no manifest or info of its own,
+simulator, **not a Driver** in the Renewvan glossary sense: it has no manifest or info of its own,
 and the repo keeps its `driver-demo` artifact name only for historical reasons.
 
 Inspired by Venus OS's Demo mode: `dbus-recorder`'s `play.py` replays recordings of real
@@ -126,5 +126,5 @@ file pins by tag (never builds from source — see
 
 A beta from a feature branch: dispatch the workflow on that branch with **prerelease**
 ticked. It runs the tests, publishes only its own tag (never `:latest`) and writes nothing
-to `main`. The process is shared by every renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`);
+to `main`. The process is shared by every Renewvan repo and lives in `hub` (`hub/docs/adr/0015-one-release-process-via-reusable-workflows.md`);
 this repo's `release.yml` only says what it ships.
